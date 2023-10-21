@@ -4,17 +4,26 @@ import torchvision.models as models
 from torchvision import transforms as trn
 from torch.nn import functional as F
 import os
+import cv2
+import tempfile
 from PIL import Image, UnidentifiedImageError
 
 
 RELEVANT_PLACES = ['construction_site', 'street', 'desert_road', 'field_road', 'industrial_area', 'highway']
 MINIMUM_PROBABILITY = 0.01
+MAX_FRAMES_TO_CHECK = 100
+JUMP_FRAMES = 10
 
 
 class Recognizer:
-    def __init__(self, classes_white_list, minimum_probability=MINIMUM_PROBABILITY):
+    def __init__(self, classes_white_list,
+                 minimum_probability=MINIMUM_PROBABILITY,
+                 max_frames_to_check=MAX_FRAMES_TO_CHECK,
+                 jump_frames=JUMP_FRAMES):
         self.classes_white_list = classes_white_list
         self.minimum_probability = minimum_probability
+        self.max_frames_to_check = max_frames_to_check
+        self.jump_frames = jump_frames
 
         # th architecture to use
         self.arch = 'resnet18'
@@ -50,6 +59,46 @@ class Recognizer:
                 classes.append(line.strip().split(' ')[0][3:])
         self.classes = tuple(classes)
 
+    @staticmethod
+    def is_video(video_path):
+        try:
+            video = cv2.VideoCapture(video_path)
+            success, image = video.read()
+            return success
+        except cv2.error:
+            return False
+
+    def is_video_relevant(self, video_path):
+        try:
+            video = cv2.VideoCapture(video_path)
+            success, image = video.read()
+            if not success:
+                return {}
+        except cv2.error:
+            return {}
+
+        count = 0
+        while success and count < self.max_frames_to_check:
+            with tempfile.NamedTemporaryFile(suffix='.jpeg') as tmp:
+                cv2.imwrite(tmp.name, image)
+                if self.is_image_relevant(tmp.name):
+                    return True
+
+            for i in range(self.jump_frames):
+                success, image = video.read()
+                print('Read a new frame: ', success)
+                if not success:
+                    break
+            count += 1
+
+    @staticmethod
+    def is_image(image_path):
+        try:
+            Image.open(image_path)
+        except UnidentifiedImageError:
+            return False
+        return True
+
     def recognize_image(self, image_path):
         try:
             img = Image.open(image_path)
@@ -83,25 +132,26 @@ class Recognizer:
                 return True
         return False
 
-    def get_relevant_images(self, images_folder_path):
-        relevant_images = []
-        not_relevant_images = []
-        for image_name in os.listdir(images_folder_path):
-            image_path = os.path.join(images_folder_path, image_name)
-            if self.is_image_relevant(image_path):
-                relevant_images.append(image_path)
+    def get_relevant_files(self, folder_path):
+        relevant_files = []
+        not_relevant_files = []
+        for path in os.listdir(folder_path):
+            file_path = os.path.join(folder_path, path)
+            if (self.is_image(file_path) and self.is_image_relevant(file_path)) or \
+                    (self.is_video(file_path) and self.is_video_relevant(file_path)):
+                relevant_files.append(file_path)
             else:
-                not_relevant_images.append(image_path)
-        return relevant_images, not_relevant_images
+                not_relevant_files.append(file_path)
+        return relevant_files, not_relevant_files
 
 
 def main():
-    recognizer = Recognizer(RELEVANT_PLACES, MINIMUM_PROBABILITY)
-    relevant_images, not_relevant_images = recognizer.get_relevant_images('images')
-    print('Relevant images:')
-    print(relevant_images)
-    print('Not relevant images:')
-    print(not_relevant_images)
+    recognizer = Recognizer(RELEVANT_PLACES, MINIMUM_PROBABILITY, MAX_FRAMES_TO_CHECK, JUMP_FRAMES)
+    relevant_files, not_relevant_files = recognizer.get_relevant_files('inputs')
+    print('Relevant files:')
+    print(relevant_files)
+    print('Not relevant files:')
+    print(not_relevant_files)
 
 
 if __name__ == '__main__':
