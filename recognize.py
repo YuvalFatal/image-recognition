@@ -4,7 +4,7 @@ import torchvision.models as models
 from torchvision import transforms as trn
 from torch.nn import functional as F
 import os
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 
 RELEVANT_PLACES = ['construction_site', 'street', 'desert_road', 'field_road', 'industrial_area', 'highway']
@@ -51,7 +51,12 @@ class Recognizer:
         self.classes = tuple(classes)
 
     def recognize_image(self, image_path):
-        img = Image.open(image_path)
+        try:
+            img = Image.open(image_path)
+        except UnidentifiedImageError:
+            print('UnidentifiedImageError: {}'.format(image_path))
+            return {}
+
         input_img = V(self.centre_crop(img).unsqueeze(0))
 
         # forward pass
@@ -70,9 +75,13 @@ class Recognizer:
 
     def is_image_relevant(self, image_path):
         result = self.recognize_image(image_path)
+        if len(result) == 0:
+            return True
+
         for key in result:
             if key in self.classes_white_list and result[key] > self.minimum_probability:
                 return True
+        return False
 
     def get_relevant_images(self, images_folder_path):
         relevant_images = []
